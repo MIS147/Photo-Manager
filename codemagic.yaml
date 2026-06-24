@@ -1,0 +1,66 @@
+# codemagic.yaml — automated cloud APK build for Photo Organizer
+# Push this file (plus pubspec.yaml, lib/, and assets/mobilefacenet.tflite)
+# to a GitHub repo, connect the repo in Codemagic, and run this workflow.
+# It generates the Android project, injects permissions + minSdk, and builds
+# a release APK you can download and drag into BlueStacks / Nox.
+
+workflows:
+  build-apk:
+    name: Photo Organizer - Build APK
+    instance_type: linux_x2
+    max_build_duration: 60
+    environment:
+      flutter: stable
+    scripts:
+      - name: Generate Android platform files
+        script: |
+          flutter --version
+          flutter create --platforms=android --project-name photo_organizer .
+
+      - name: Inject permissions + minSdk
+        script: |
+          python3 - <<'PY'
+          import re, os, glob
+
+          # 1) AndroidManifest: add storage permissions
+          mf = "android/app/src/main/AndroidManifest.xml"
+          s = open(mf).read()
+          perms = (
+            '    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>\n'
+            '    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>\n'
+            '    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>\n'
+          )
+          if "MANAGE_EXTERNAL_STORAGE" not in s:
+              s = s.replace("<application", perms + "    <application", 1)
+              open(mf, "w").write(s)
+              print("manifest patched")
+
+          # 2) minSdk = 24 (handles Groovy build.gradle and Kotlin build.gradle.kts,
+          #    and the flutter.minSdkVersion placeholder)
+          for g in ["android/app/build.gradle", "android/app/build.gradle.kts"]:
+              if not os.path.exists(g):
+                  continue
+              b = open(g).read()
+              b = b.replace("flutter.minSdkVersion", "24")
+              b = re.sub(r"minSdkVersion\s+\S+", "minSdkVersion 24", b)
+              b = re.sub(r"minSdk\s*=\s*\S+", "minSdk = 24", b)
+              open(g, "w").write(b)
+              print("patched", g)
+          PY
+
+      - name: Verify the face model asset exists
+        script: |
+          test -f assets/mobilefacenet.tflite || (echo "ERROR: assets/mobilefacenet.tflite is missing. Add it to the repo." && exit 1)
+
+      - name: Get packages
+        script: flutter pub get
+
+      - name: Build release APK
+        script: flutter build apk --release
+    artifacts:
+      - build/**/outputs/**/*.apk
+    # Optional: email yourself the APK when done. Uncomment and set your email.
+    # publishing:
+    #   email:
+    #     recipients:
+    #       - you@example.com
